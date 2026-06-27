@@ -1,7 +1,7 @@
 /**
  * AbdDetector — Leeapk Ad Block Detector Library
- * Version: 2.1.5 (False-Positive Fixed)
- * Author: Mr. Lee (leeapk.com)
+ * Version: 2.1.6
+ * Author: Mr. Lee
  */
 
 (function (root, factory) {
@@ -210,29 +210,42 @@
        ═══════════════════════════════════════════════════════════ */
     return {
         init: function (config) {
-            config = config || {};
-            _baitScriptUrl = config.baitScriptUrl || '';
-            _onDetectedCb  = config.onDetected || null;
-            _onClearCb     = config.onClear    || null;
-            _detected      = false;
-            _cleanChecks   = 0;
-            _pendingChecks = 3;
-
-            checkBraveShields(function (blocked) {
-                if (blocked) _trigger('brave_shields');
-                _checkComplete(blocked);
-            });
-
-            checkExtensions(function (blocked) {
-                if (blocked) _trigger('extension');
-                _checkComplete(blocked);
-            });
-
-            checkDNSBlock(function (blocked) {
-                if (blocked) _trigger('dns');
-                _checkComplete(blocked);
-            });
-        },
+        // হাই-ট্রাফিক সেফটি লক: সেশনে অলরেডি 'clear' বা চেক করা থাকলে দ্বিতীয়বার রান করবে না
+        if (sessionStorage.getItem('abd_checked') === 'true') {
+            if (config.onClear) config.onClear();
+            return;
+        }
+    
+        config = config || {};
+        _baitScriptUrl = config.baitScriptUrl || '';
+        
+        // মূল অন-ক্লিয়ার মেথড মডিফাই করে সেশন সেভ করা
+        var originalOnClear = config.onClear || null;
+        _onClearCb = function() {
+            sessionStorage.setItem('abd_checked', 'true'); // সেশন লক সেট করা হলো
+            if (typeof originalOnClear === 'function') originalOnClear();
+        };
+    
+        _onDetectedCb  = config.onDetected || null;
+        _detected      = false;
+        _cleanChecks   = 0;
+        _pendingChecks = 3;
+    
+        checkBraveShields(function (blocked) {
+            if (blocked) _trigger('brave_shields');
+            _checkComplete(blocked);
+        });
+    
+        checkExtensions(function (blocked) {
+            if (blocked) _trigger('extension');
+            _checkComplete(blocked);
+        });
+    
+        checkDNSBlock(function (blocked) {
+            if (blocked) _trigger('dns');
+            _checkComplete(blocked);
+        });
+    },
 
         checkBraveShields: checkBraveShields,
         checkExtensions: checkExtensions,
@@ -243,6 +256,6 @@
             _pendingChecks = 0;
             _cleanChecks   = 0;
         },
-        version: '2.1.5'
+        version: '2.1.6'
     };
 }));
