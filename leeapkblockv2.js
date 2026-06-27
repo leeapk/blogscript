@@ -1,6 +1,6 @@
 /**
  * AbdDetector — Leeapk Ad Block Detector Library
- * Version: 2.1.5 (False-Positive Fixed)
+ * Version: 2.1.6
  * Author: Mr. Lee (leeapk.com)
  */
 
@@ -97,9 +97,8 @@
 
         function evaluate() {
             if (domBlocked === null || scriptBlocked === null) return;
-            // দুইটা মেথডই যখন কনফার্ম করবে তখনই ট্রু হবে (False positive prevention)
-            callback(domBlocked && scriptBlocked);
-        }
+            // fix — DOM blocked হলেই যথেষ্ট
+            callback(domBlocked || scriptBlocked);
 
         // — Sub-check A: DOM Bait —
         var bait = document.createElement('div');
@@ -243,6 +242,6 @@
             _pendingChecks = 0;
             _cleanChecks   = 0;
         },
-        version: '2.1.5'
+        version: '2.1.6'
     };
 }));
