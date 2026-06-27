@@ -1,7 +1,7 @@
 /**
- * AbdDetector — Leeapk Ad Block Detector Library
- * Version: 2.1.6
- * Author: Mr. Lee (leeapk.com)
+ * Ad Block Detector
+ * Version: 2.1.7
+ * Author: Mr. Lee
  */
 
 (function (root, factory) {
@@ -30,7 +30,6 @@
     function _checkComplete(isBlocked) {
         _pendingChecks--;
         if (!isBlocked) _cleanChecks++;
-
         if (_pendingChecks === 0 && !_detected) {
             if (typeof _onClearCb === 'function') {
                 _onClearCb();
@@ -55,10 +54,10 @@
                 return;
             }
 
-            var img       = new Image();
+            var img = new Image();
             var startTime = Date.now();
-            var finished  = false;
-            var DNS_FAST_THRESHOLD = 80; // ফলস পজিটিভ এড়াতে থ্রেশহোল্ড কমানো হলো
+            var finished = false;
+            var DNS_FAST_THRESHOLD = 80;
 
             function done(blocked) {
                 if (finished) return;
@@ -69,14 +68,9 @@
             img.onload = function () { done(false); };
             img.onerror = function () {
                 var elapsed = Date.now() - startTime;
-                if (elapsed < DNS_FAST_THRESHOLD) {
-                    done(true); 
-                } else {
-                    done(false); 
-                }
+                done(elapsed < DNS_FAST_THRESHOLD);
             };
 
-            // স্লো নেটের কারণে যাতে ইউজার ট্র্যাপে না পড়ে তাই টাইমাউট ফলব্যাক 'false' করা হলো
             setTimeout(function () { done(false); }, 3500);
             img.src = 'https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/?ts=' + Date.now();
 
@@ -86,24 +80,26 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 2: BROWSER EXTENSIONS
+       CHECK 2: BROWSER EXTENSIONS (Fixed)
        ═══════════════════════════════════════════════════════════ */
     var _baitScriptUrl = '';
 
     function checkExtensions(callback) {
         callback = callback || function () {};
+
         var domBlocked    = null;
         var scriptBlocked = null;
 
+        // ✅ evaluate() এখন শুধু result check করে — বাইরে কোনো side effect নেই
         function evaluate() {
             if (domBlocked === null || scriptBlocked === null) return;
-            // fix — DOM blocked হলেই যথেষ্ট
             callback(domBlocked || scriptBlocked);
+        }
 
-        // — Sub-check A: DOM Bait —
+        // ✅ Sub-check A: DOM Bait — evaluate()-এর বাইরে
         var bait = document.createElement('div');
         bait.id = 'abd-ext-bait-' + Date.now();
-        bait.className = ['adsbox', 'adsbygoogle', 'ad-banner', 'advertisement', 'pub_300x250'].join(' ');
+        bait.className = 'adsbox adsbygoogle ad-banner advertisement pub_300x250';
         bait.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
         document.body.appendChild(bait);
 
@@ -115,57 +111,51 @@
                 cs.display        === 'none' ||
                 cs.visibility     === 'hidden'
             );
-            bait.parentNode && bait.parentNode.removeChild(bait);
+            if (bait.parentNode) bait.parentNode.removeChild(bait);
             evaluate();
         }, 350);
 
-        // — Sub-check B: Bait Script —
-        if (!_baitScriptUrl) { // 'leeapk' স্ট্রিং চেকিং বাগটি রিমুভ করা হলো
+        // ✅ Sub-check B: Bait Script — evaluate()-এর বাইরে
+        if (!_baitScriptUrl) {
             scriptBlocked = false;
             evaluate();
         } else {
             window.abd_ok = undefined;
-            var s   = document.createElement('script');
-            s.src   = _baitScriptUrl + '?_=' + Date.now();
+            var s = document.createElement('script');
+            s.src = _baitScriptUrl + '?_=' + Date.now();
             s.async = true;
             var scriptDone = false;
 
             function finishScript(blocked) {
                 if (scriptDone) return;
                 scriptDone = true;
-                s.parentNode && s.parentNode.removeChild(s);
+                if (s.parentNode) s.parentNode.removeChild(s);
                 scriptBlocked = blocked;
                 evaluate();
             }
 
-            s.onload = function () {
-                finishScript(window.abd_ok !== 1);
-            };
-            s.onerror = function () {
-                finishScript(true);
-            };
-
-            // নেট স্লো হলে অ্যাড ব্লকার ভেবে ভুল করবে না
+            s.onload  = function () { finishScript(window.abd_ok !== 1); };
+            s.onerror = function () { finishScript(true); };
             setTimeout(function () { finishScript(false); }, 4000);
             document.head.appendChild(s);
         }
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 3: DNS-LEVEL BLOCKING
+       CHECK 3: DNS-LEVEL BLOCKING (Fixed — safer domains)
        ═══════════════════════════════════════════════════════════ */
     var DNS_PROBE_DOMAINS = [
         'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
-        'https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/'
+        'https://static.doubleclick.net/instream/ad_status.js'
+        // ✅ doubleclick.net এর safer endpoint ব্যবহার — কম false positive
     ];
 
-    var DNS_BLOCK_THRESHOLD    = 50;  // ৫০ মিলি সেকেন্ডের নিচে হলে তবেই লোকাল ফিল্টারিং (Pi-hole) নিশ্চিত হবে
-    var DNS_MAJORITY_NEEDED    = 2;  
+    var DNS_BLOCK_THRESHOLD = 50;
+    var DNS_MAJORITY_NEEDED = 2;
 
     function checkDNSBlock(callback) {
         callback = callback || function () {};
 
-        // ইউজার যদি অফলাইনে থাকে তবে ডিএনএস ব্লকিং চেক স্কিপ করবে
         if (!navigator.onLine) {
             callback(false);
             return;
@@ -185,20 +175,16 @@
                 done = true;
                 results.push(fastBlocked);
                 completed++;
-
                 if (completed === total) {
                     var fastBlockCount = results.filter(Boolean).length;
                     callback(fastBlockCount >= DNS_MAJORITY_NEEDED);
                 }
             }
 
-            img.onload = function () { finish(false); };
+            img.onload  = function () { finish(false); };
             img.onerror = function () {
-                var elapsed = Date.now() - startTime;
-                finish(elapsed < DNS_BLOCK_THRESHOLD);
+                finish(Date.now() - startTime < DNS_BLOCK_THRESHOLD);
             };
-
-            // নেট স্লো ট্র্যাপ রিলিজ
             setTimeout(function () { finish(false); }, 3500);
             img.src = url + '?_dns_=' + Date.now();
         });
@@ -209,7 +195,7 @@
        ═══════════════════════════════════════════════════════════ */
     return {
         init: function (config) {
-            config = config || {};
+            config         = config || {};
             _baitScriptUrl = config.baitScriptUrl || '';
             _onDetectedCb  = config.onDetected || null;
             _onClearCb     = config.onClear    || null;
@@ -233,15 +219,15 @@
             });
         },
 
-        checkBraveShields: checkBraveShields,
-        checkExtensions: checkExtensions,
-        checkDNSBlock: checkDNSBlock,
+        checkBraveShields : checkBraveShields,
+        checkExtensions   : checkExtensions,
+        checkDNSBlock     : checkDNSBlock,
 
         reset: function () {
             _detected      = false;
             _pendingChecks = 0;
             _cleanChecks   = 0;
         },
-        version: '2.1.6'
+        version: '2.1.7'
     };
 }));
