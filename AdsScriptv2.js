@@ -2,7 +2,7 @@
     if (typeof window.AcrpConfig === 'undefined' || !window.AcrpConfig.links) return;
     const conf = window.AcrpConfig;
     let linksArray = Array.isArray(conf.links) ? conf.links : Object.values(conf.links);
-    if (linksArray.length === 0) return;ে
+    if (linksArray.length === 0) return;
 
     document.addEventListener("click", function(e) {
         const now = Date.now();
