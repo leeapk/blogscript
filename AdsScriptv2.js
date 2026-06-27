@@ -3,13 +3,16 @@
     const conf = window.AcrpConfig;
     let linksArray = Array.isArray(conf.links) ? conf.links : Object.values(conf.links);
     if (linksArray.length === 0) return;ে
+
     document.addEventListener("click", function(e) {
-        if (conf.type !== 'anywhere') { 
-            if (conf.sel && !e.target.closest(conf.sel)) return; 
-        }
         const now = Date.now();
         const last = parseInt(localStorage.getItem("acrp_l") || 0, 10);
         if (now - last < conf.cool) return;
+
+        if (conf.type !== 'anywhere') {
+            if (conf.sel && !e.target.closest(conf.sel)) return;
+        }
+
         const randomIndex = Math.floor(Math.random() * linksArray.length);
         const targetLink = linksArray[randomIndex];
         localStorage.setItem("acrp_l", now);
@@ -18,6 +21,5 @@
             newWindow.blur();
             window.focus();
         }
-        
     }, { passive: true });
 })();
