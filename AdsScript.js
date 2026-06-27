@@ -1,25 +1,21 @@
 (function(){
-    if (typeof window.AcrpConfig === 'undefined' || !window.AcrpConfig.links) return;
+    if (typeof window.AcrpConfig === 'undefined') return;
     const conf = window.AcrpConfig;
-    let linksArray = Array.isArray(conf.links) ? conf.links : Object.values(conf.links);
-    if (linksArray.length === 0) return;
-
+    
     document.addEventListener("click", function(e) {
+        if (conf.type === 'anywhere') { 
+        } else { 
+            if (!e.target.closest(conf.sel)) return; 
+        }
+        
         const now = Date.now();
-        const last = parseInt(localStorage.getItem("acrp_l") || 0, 10);
+        const last = parseInt(localStorage.getItem("acrp_l") || 0);
         if (now - last < conf.cool) return;
-
-        if (conf.type !== 'anywhere') {
-            if (conf.sel && !e.target.closest(conf.sel)) return;
-        }
-
-        const randomIndex = Math.floor(Math.random() * linksArray.length);
-        const targetLink = linksArray[randomIndex];
+        
+        let i = parseInt(localStorage.getItem("acrp_i") || 0);
         localStorage.setItem("acrp_l", now);
-        const newWindow = window.open(targetLink, "_blank");
-        if (newWindow) {
-            newWindow.blur();
-            window.focus();
-        }
-    }, { passive: true });
+        localStorage.setItem("acrp_i", (i + 1) % conf.links.length);
+        
+        window.open(conf.links[i % conf.links.length], "_blank");
+    });
 })();
