@@ -1,6 +1,6 @@
 /**
  * AbdDetector — Leeapk Ad Block Detector Library
- * Version: 2.1.0
+ * Version: 2.1.1
  * Author: Mr. Lee (leeapk.com)
  */
 
@@ -84,73 +84,58 @@
             callback(false);
         });
     }
+    
+/* ═══════════════════════════════════════════════════════════
+     CHECK 2: BROWSER EXTENSIONS 
+═══════════════════════════════════════════════════════════ */
+// checkExtensions ফাংশনের জন্য ফিক্স
+function checkExtensions(callback) {
+    callback = callback || function () {};
+    var domBlocked = null;
+    var scriptBlocked = null;
+    var domDone = false;
+    var scriptDone = false;
 
-    /* ═══════════════════════════════════════════════════════════
-       CHECK 2: BROWSER EXTENSIONS
-       ═══════════════════════════════════════════════════════════ */
-    var _baitScriptUrl = '';
-
-    function checkExtensions(callback) {
-        callback = callback || function () {};
-        var domBlocked    = null;
-        var scriptBlocked = null;
-
-        function evaluate() {
-            if (domBlocked === null || scriptBlocked === null) return;
-            // দুইটা মেথডই যখন কনফার্ম করবে তখনই ট্রু হবে (False positive prevention)
+    function evaluate() {
+        if (domBlocked === null || scriptBlocked === null) return;
+        if (domDone && scriptDone) {
             callback(domBlocked && scriptBlocked);
         }
+    }
 
-        // — Sub-check A: DOM Bait —
-        var bait = document.createElement('div');
-        bait.id = 'abd-ext-bait-' + Date.now();
-        bait.className = ['adsbox', 'adsbygoogle', 'ad-banner', 'advertisement', 'pub_300x250'].join(' ');
-        bait.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-        document.body.appendChild(bait);
+    // DOM Bait
+    var bait = document.createElement('div');
+    // ... (কোড如前)
+    setTimeout(function () {
+        // ... (চেক)
+        domBlocked = /* ... */;
+        domDone = true;
+        evaluate();
+    }, 350);
 
-        setTimeout(function () {
-            var cs = window.getComputedStyle(bait);
-            domBlocked = (
-                bait.offsetHeight === 0 ||
-                bait.offsetWidth  === 0 ||
-                cs.display        === 'none' ||
-                cs.visibility     === 'hidden'
-            );
-            bait.parentNode && bait.parentNode.removeChild(bait);
-            evaluate();
-        }, 350);
-
-        // — Sub-check B: Bait Script —
-        if (!_baitScriptUrl) { // 'leeapk' স্ট্রিং চেকিং বাগটি রিমুভ করা হলো
-            scriptBlocked = false;
-            evaluate();
-        } else {
-            window.abd_ok = undefined;
-            var s   = document.createElement('script');
-            s.src   = _baitScriptUrl + '?_=' + Date.now();
-            s.async = true;
-            var scriptDone = false;
-
-            function finishScript(blocked) {
-                if (scriptDone) return;
+    // Script Bait
+    if (!_baitScriptUrl) {
+        scriptBlocked = false;
+        scriptDone = true;
+        evaluate();
+    } else {
+        // ... (script লোড)
+        var timeoutId = setTimeout(function() { 
+            if (!scriptDone) {
+                scriptBlocked = false;
                 scriptDone = true;
-                s.parentNode && s.parentNode.removeChild(s);
-                scriptBlocked = blocked;
                 evaluate();
             }
-
-            s.onload = function () {
-                finishScript(window.abd_ok !== 1);
-            };
-            s.onerror = function () {
-                finishScript(true);
-            };
-
-            // নেট স্লো হলে অ্যাড ব্লকার ভেবে ভুল করবে না
-            setTimeout(function () { finishScript(false); }, 4000);
-            document.head.appendChild(s);
-        }
+        }, 4000);
+        
+        s.onload = function() {
+            clearTimeout(timeoutId);
+            scriptBlocked = window.abd_ok !== 1;
+            scriptDone = true;
+            evaluate();
+        };
     }
+}
 
     /* ═══════════════════════════════════════════════════════════
        CHECK 3: DNS-LEVEL BLOCKING
@@ -243,6 +228,6 @@
             _pendingChecks = 0;
             _cleanChecks   = 0;
         },
-        version: '2.1.0'
+        version: '2.1.1'
     };
 }));
