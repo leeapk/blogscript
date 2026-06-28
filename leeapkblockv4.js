@@ -1,7 +1,7 @@
 /**
- * AbdDetector
- * Version: 2.2.2 (GA Optimized + Fast Detection)
- * Author: Mr. Lee
+ * AbdDetector — Leeapk Ad Block Detector Library
+ * Version: 2.2.1 (CRITICAL FIX)
+ * Author: Mr. Lee (leeapk.com)
  */
 
 (function (root, factory) {
@@ -18,11 +18,11 @@
     var _onClearCb = null;
     var _pendingChecks = 0;
     var _cleanChecks = 0;
-    var _fastTimedOut = false;
     var _baitScriptUrl = '';
     var _isGAReady = false;
     var _eventQueue = [];
     var _gaMeasurementId = '';
+    var _checkCompleted = false;
 
     /* ═══════════════════════════════════════════════════════════
        GA INTEGRATION HELPERS
@@ -30,16 +30,13 @@
     function _trackGAEvent(eventName, params) {
         params = params || {};
         
-        // GA রেডি থাকলে সরাসরি পাঠান
         if (_isGAReady && typeof gtag !== 'undefined') {
             gtag('event', eventName, params);
             return;
         }
         
-        // না থাকলে Queue-তে রাখুন
         _eventQueue.push({ event: eventName, params: params });
         
-        // Queue খুব বড় হলে ছোট করুন
         if (_eventQueue.length > 50) {
             _eventQueue.shift();
         }
@@ -61,7 +58,6 @@
         if (_detected) return;
         _detected = true;
         
-        // GA ইভেন্ট পাঠান
         _trackGAEvent('adblock_detected', {
             'method': method,
             'page': window.location.pathname,
@@ -75,30 +71,34 @@
 
     function _checkComplete(isBlocked) {
         _pendingChecks--;
+        
         if (!isBlocked) _cleanChecks++;
 
-        if (_pendingChecks === 0 && !_detected) {
-            // ক্লিয়ার ইভেন্ট GA-তে পাঠান
-            _trackGAEvent('no_adblock', {
-                'page': window.location.pathname,
-                'non_interaction': true
-            });
-            
-            if (typeof _onClearCb === 'function') {
-                _onClearCb();
+        // সব চেক কমপ্লিট হলে এবং ডিটেক্ট না হলে
+        if (_pendingChecks <= 0 && !_detected) {
+            if (!_checkCompleted) {
+                _checkCompleted = true;
+                
+                _trackGAEvent('no_adblock', {
+                    'page': window.location.pathname,
+                    'non_interaction': true
+                });
+                
+                if (typeof _onClearCb === 'function') {
+                    _onClearCb();
+                }
             }
         }
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 1: BRAVE SHIELDS (OPTIMIZED)
+       CHECK 1: BRAVE SHIELDS
        ═══════════════════════════════════════════════════════════ */
     function checkBraveShields(callback) {
         callback = callback || function () {};
 
         // ফাস্ট চেক: User Agent
         if (navigator.userAgent.indexOf('Brave') !== -1) {
-            // ডিএনএস চেক (ফাস্ট)
             var img = new Image();
             var startTime = Date.now();
             var finished = false;
@@ -112,7 +112,6 @@
             img.onload = function () { done(false); };
             img.onerror = function () {
                 var elapsed = Date.now() - startTime;
-                // 30ms এর কম হলে Brave Shield সক্রিয়
                 done(elapsed < 30);
             };
             
@@ -121,7 +120,7 @@
             return;
         }
 
-        // স্লো চেক: navigator.brave (যদি উপলব্ধ থাকে)
+        // স্লো চেক: navigator.brave
         if (!navigator.brave || typeof navigator.brave.isBrave !== 'function') {
             callback(false);
             return;
@@ -171,12 +170,11 @@
         function evaluate() {
             if (domBlocked === null || scriptBlocked === null) return;
             if (domDone && scriptDone) {
-                // দুইটা মেথডই কনফার্ম করলে ট্রু হবে
                 callback(domBlocked && scriptBlocked);
             }
         }
 
-        // — Sub-check A: DOM Bait (ফাস্ট) —
+        // DOM Bait
         var bait = document.createElement('div');
         bait.id = 'abd-ext-bait-' + Date.now();
         bait.className = ['adsbox', 'adsbygoogle', 'ad-banner', 'advertisement', 'pub_300x250'].join(' ');
@@ -196,7 +194,7 @@
             evaluate();
         }, 350);
 
-        // — Sub-check B: Bait Script (স্লো) —
+        // Script Bait
         if (!_baitScriptUrl) {
             scriptBlocked = false;
             scriptDone = true;
@@ -230,14 +228,14 @@
 
             timeoutId = setTimeout(function () { 
                 finishScript(false); 
-            }, 2000); // 4s থেকে 2s-এ কমানো হলো
+            }, 2000);
             
             document.head.appendChild(s);
         }
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 3: DNS-LEVEL BLOCKING (OPTIMIZED)
+       CHECK 3: DNS-LEVEL BLOCKING
        ═══════════════════════════════════════════════════════════ */
     var DNS_PROBE_DOMAINS = [
         'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
@@ -246,17 +244,11 @@
         'https://tpc.googlesyndication.com/safeframe/1-0-40/html/container.html'
     ];
 
-    var DNS_BLOCK_THRESHOLD = 30; // 30ms এর কম হলে ব্লক
+    var DNS_BLOCK_THRESHOLD = 30;
     var DNS_MAJORITY_NEEDED = 2;
 
     function checkDNSBlock(callback) {
         callback = callback || function () {};
-
-        // অফলাইন চেক (ইমপ্রুভড)
-        if (!navigator.onLine) {
-            // অফলাইন হলেও DNS চেক করার চেষ্টা করুন
-            // কিছু অ্যাডব্লকার অফলাইনেও কাজ করে
-        }
 
         var results = [];
         var total = DNS_PROBE_DOMAINS.length;
@@ -293,7 +285,7 @@
 
             timeoutId = setTimeout(function () { 
                 finish(false); 
-            }, 2000); // 3.5s থেকে 2s-এ কমানো
+            }, 2000);
             
             timeoutIds.push(timeoutId);
             img.src = url + '?_dns_=' + Date.now() + '_' + index;
@@ -301,14 +293,13 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       GA LOADER (INTEGRATED)
+       GA LOADER
        ═══════════════════════════════════════════════════════════ */
     function _loadGA(measurementId) {
         if (!measurementId || _isGAReady) return;
         
         _gaMeasurementId = measurementId;
         
-        // GA স্ক্রিপ্ট লোড করুন
         var script = document.createElement('script');
         script.async = true;
         script.src = 'https://www.googletagmanager.com/gtag/js?id=' + measurementId;
@@ -323,19 +314,16 @@
                 }
             });
             _isGAReady = true;
-            
-            // Queue-তে থাকা ইভেন্টগুলো পাঠান
             _flushGAEvents();
         };
         script.onerror = function() {
-            // GA লোড না হলেও AbdDetector কাজ করবে
             console.warn('GA failed to load, but AbdDetector is active');
         };
         document.head.appendChild(script);
     }
 
     /* ═══════════════════════════════════════════════════════════
-       PUBLIC API
+       PUBLIC API (FIXED)
        ═══════════════════════════════════════════════════════════ */
     return {
         init: function (config) {
@@ -346,24 +334,21 @@
             _detected = false;
             _cleanChecks = 0;
             _pendingChecks = 0;
-            _fastTimedOut = false;
+            _checkCompleted = false;
             
-            // GA ইনিশিয়ালাইজ করুন (যদি দেওয়া থাকে)
+            // GA ইনিশিয়ালাইজ করুন
             if (config.gaMeasurementId) {
                 _loadGA(config.gaMeasurementId);
             }
 
-            // ফাস্ট টাইমআউট - 1500ms
-            var fastTimeout = setTimeout(function() {
-                _fastTimedOut = true;
-            }, 1500);
-
+            // টোটাল চেক কাউন্ট সেট করুন
+            var totalChecks = 3; // DNS, Brave, Extension
+            
             // === চেক ১: DNS (ফাস্টেস্ট) ===
             _pendingChecks++;
             checkDNSBlock(function (blocked) {
                 if (blocked && !_detected) {
                     _trigger('dns');
-                    clearTimeout(fastTimeout);
                 }
                 _checkComplete(blocked);
             });
@@ -373,45 +358,39 @@
             checkBraveShields(function (blocked) {
                 if (blocked && !_detected) {
                     _trigger('brave_shields');
-                    clearTimeout(fastTimeout);
                 }
                 _checkComplete(blocked);
             });
 
-            // === চেক ৩: Extensions (স্লো, কিন্তু ফাস্ট ফলব্যাক) ===
-            // 100ms পর চালান, ফাস্ট চেক শেষ হওয়ার জন্য অপেক্ষা
-            setTimeout(function() {
-                if (!_detected) {
-                    _pendingChecks++;
-                    checkExtensions(function (blocked) {
-                        if (blocked && !_detected) {
-                            _trigger('extension');
-                            clearTimeout(fastTimeout);
-                        }
-                        _checkComplete(blocked);
-                    });
+            // === চেক ৩: Extensions (স্লো) ===
+            _pendingChecks++;
+            // Extension চেক এখনই রান করবে, setTimeout ছাড়া
+            checkExtensions(function (blocked) {
+                if (blocked && !_detected) {
+                    _trigger('extension');
                 }
-            }, 100);
+                _checkComplete(blocked);
+            });
 
-            // 1500ms পরেও যদি ডিটেক্ট না হয়, ক্লিয়ার কল করুন
+            // ব্যাকআপ টাইমার: 3 সেকেন্ড পরেও যদি কিছু না হয়
             setTimeout(function() {
-                if (!_detected && _pendingChecks === 0) {
-                    // সব চেক কমপ্লিট হয়েছে কিন্তু ডিটেক্ট হয়নি
+                if (!_detected && _pendingChecks > 0) {
+                    // পেন্ডিং চেকগুলো ফোর্স কমপ্লিট করুন
+                    while (_pendingChecks > 0) {
+                        _checkComplete(false);
+                    }
                 }
-            }, 2000);
+            }, 3000);
         },
 
-        // ইন্ডিপেন্ডেন্ট চেক মেথড
         checkBraveShields: checkBraveShields,
         checkExtensions: checkExtensions,
         checkDNSBlock: checkDNSBlock,
 
-        // GA ম্যানুয়ালি সেট করার মেথড
         setGA: function(measurementId) {
             _loadGA(measurementId);
         },
 
-        // ম্যানুয়ালি GA ইভেন্ট পাঠান
         trackEvent: function(eventName, params) {
             _trackGAEvent(eventName, params);
         },
@@ -420,10 +399,10 @@
             _detected = false;
             _pendingChecks = 0;
             _cleanChecks = 0;
-            _fastTimedOut = false;
+            _checkCompleted = false;
             _eventQueue = [];
         },
         
-        version: '2.2.2'
+        version: '2.2.1'
     };
 }));
