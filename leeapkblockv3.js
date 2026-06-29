@@ -1,6 +1,6 @@
 /**
  * Ad Block Detector
- * Version: 2.1.9
+ * Version: 2.2.0
  * Author: Mr. Lee
  */
 
@@ -57,7 +57,7 @@
             var img = new Image();
             var startTime = Date.now();
             var finished = false;
-            var DNS_FAST_THRESHOLD = 80;
+            var DNS_FAST_THRESHOLD = 40;
 
             function done(blocked) {
                 if (finished) return;
@@ -71,7 +71,7 @@
                 done(elapsed < DNS_FAST_THRESHOLD);
             };
 
-            setTimeout(function () { done(false); }, 3500);
+            setTimeout(function () { done(false); }, 2000);
             img.src = 'https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/?ts=' + Date.now();
 
         }).catch(function () {
@@ -80,7 +80,7 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 2: BROWSER EXTENSIONS
+       CHECK 2: BROWSER EXTENSIONS (Fixed)
        ═══════════════════════════════════════════════════════════ */
     var _baitScriptUrl = '';
 
@@ -90,12 +90,13 @@
         var domBlocked    = null;
         var scriptBlocked = null;
 
+        // evaluate() এখন শুধু result check করে — বাইরে কোনো side effect নেই
         function evaluate() {
             if (domBlocked === null || scriptBlocked === null) return;
             callback(domBlocked || scriptBlocked);
         }
 
-        // DOM Bait
+        // Sub-check A: DOM Bait — evaluate()-এর বাইরে
         var bait = document.createElement('div');
         bait.id = 'abd-ext-bait-' + Date.now();
         bait.className = 'adsbox adsbygoogle ad-banner advertisement pub_300x250';
@@ -114,7 +115,7 @@
             evaluate();
         }, 350);
 
-        // Bait Script
+        // Sub-check B: Bait Script — evaluate()-এর বাইরে
         if (!_baitScriptUrl) {
             scriptBlocked = false;
             evaluate();
@@ -135,17 +136,20 @@
 
             s.onload  = function () { finishScript(window.abd_ok !== 1); };
             s.onerror = function () { finishScript(true); };
-            setTimeout(function () { finishScript(false); }, 4000);
+            setTimeout(function () { finishScript(false); }, 2000);
             document.head.appendChild(s);
         }
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 3: DNS-LEVEL BLOCKING
+       CHECK 3: DNS-LEVEL BLOCKING (Fixed — safer domains)
        ═══════════════════════════════════════════════════════════ */
     var DNS_PROBE_DOMAINS = [
         'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',
-        'https://static.doubleclick.net/instream/ad_status.js'
+        'https://pagead2.googlesyndication.com/pagead/show_ads.js',
+        'https://static.doubleclick.net/instream/ad_status.js',
+        'https://securepubads.g.doubleclick.net/tag/js/gpt.js',
+        'https://www.googletagservices.com/tag/js/gpt.js'
     ];
 
     var DNS_BLOCK_THRESHOLD = 50;
@@ -183,38 +187,52 @@
             img.onerror = function () {
                 finish(Date.now() - startTime < DNS_BLOCK_THRESHOLD);
             };
-            setTimeout(function () { finish(false); }, 3500);
+            setTimeout(function () { finish(false); }, 2000);
             img.src = url + '?_dns_=' + Date.now();
         });
     }
 
     /* ═══════════════════════════════════════════════════════════
-       CHECK 4: GHOSTERY
+       CHECK 4: HONEYPOT (New)
        ═══════════════════════════════════════════════════════════ */
-    function checkGhostery(callback) {
-        callback = callback || function () {};
-        var maxWait = 500;
-        var startTime = Date.now();
+    var HONEYPOT_CLASSES = [
+        'adsbox', 'ad-banner', 'banner-ad',
+        'acrp-ad-box-1', 'acrp-ad-box-2',
+        'random-ad', 'google-ads'
+    ];
 
-        function poll() {
-            try {
-                var isGhostery = !!(window.ghostery || window.Ghostery);
-                
-                if (isGhostery) {
-                    callback(true);
-                    return;
-                }
-                
-                if (Date.now() - startTime < maxWait) {
-                    setTimeout(poll, 30);
-                } else {
-                    callback(false);
-                }
-            } catch (e) {
-                callback(false);
+    function checkHoneypot(callback) {
+        callback = callback || function () {};
+
+        try {
+            var div = document.createElement('div');
+            var cls = HONEYPOT_CLASSES[Math.floor(Math.random() * HONEYPOT_CLASSES.length)];
+            div.className = cls;
+            div.style.cssText = 'height:1px;width:1px;overflow:hidden;position:absolute;top:-9999px;left:-9999px;';
+            document.body.appendChild(div);
+
+            var done = false;
+
+            function finish(blocked) {
+                if (done) return;
+                done = true;
+                if (div.parentNode) div.parentNode.removeChild(div);
+                callback(blocked);
             }
+
+            setTimeout(function () {
+                // Check if the div was hidden or removed by an ad-blocker
+                var hidden = (
+                    div.offsetParent === null ||
+                    div.style.display === 'none' ||
+                    div.style.visibility === 'hidden' ||
+                    getComputedStyle(div).display === 'none'
+                );
+                finish(hidden);
+            }, 100);
+        } catch (e) {
+            callback(false);
         }
-        poll();
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -230,16 +248,6 @@
             _cleanChecks   = 0;
             _pendingChecks = 4;
 
-            if (_checkTimeout) clearTimeout(_checkTimeout);
-            _checkTimeout = setTimeout(function () {
-                while (_pendingChecks > 0) {
-                    _pendingChecks--;
-                }
-                if (!_detected && typeof _onClearCb === 'function') {
-                    _onClearCb();
-                }
-            }, 10000);
-
             checkBraveShields(function (blocked) {
                 if (blocked) _trigger('brave_shields');
                 _checkComplete(blocked);
@@ -254,22 +262,23 @@
                 if (blocked) _trigger('dns');
                 _checkComplete(blocked);
             });
-            
-            checkGhostery(function (blocked) {
-                if (blocked) _trigger('ghostery');
+
+            checkHoneypot(function (blocked) {
+                if (blocked) _trigger('honeypot');
                 _checkComplete(blocked);
             });
         },
+
+        checkBraveShields : checkBraveShields,
+        checkExtensions   : checkExtensions,
+        checkDNSBlock     : checkDNSBlock,
+        checkHoneypot     : checkHoneypot,
 
         reset: function () {
             _detected      = false;
             _pendingChecks = 0;
             _cleanChecks   = 0;
-            if (_checkTimeout) {
-                clearTimeout(_checkTimeout);
-                _checkTimeout = null;
-            }
         },
-        version: '2.1.9'
+        version: '2.2.0'
     };
 }));
