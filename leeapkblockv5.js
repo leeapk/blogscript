@@ -1,6 +1,6 @@
 /**
  * Ad Block Detector
- * Version: 2.1.9
+ * Version: 2.2.0
  * Author: Mr. Lee
  */
 
@@ -57,7 +57,7 @@
             var img = new Image();
             var startTime = Date.now();
             var finished = false;
-            var DNS_FAST_THRESHOLD = 50;
+            var DNS_FAST_THRESHOLD = 40;
 
             function done(blocked) {
                 if (finished) return;
@@ -90,13 +90,13 @@
         var domBlocked    = null;
         var scriptBlocked = null;
 
-        // ✅ evaluate() এখন শুধু result check করে — বাইরে কোনো side effect নেই
+        // evaluate() এখন শুধু result check করে — বাইরে কোনো side effect নেই
         function evaluate() {
             if (domBlocked === null || scriptBlocked === null) return;
             callback(domBlocked || scriptBlocked);
         }
 
-        // ✅ Sub-check A: DOM Bait — evaluate()-এর বাইরে
+        // Sub-check A: DOM Bait — evaluate()-এর বাইরে
         var bait = document.createElement('div');
         bait.id = 'abd-ext-bait-' + Date.now();
         bait.className = 'adsbox adsbygoogle ad-banner advertisement pub_300x250';
@@ -115,7 +115,7 @@
             evaluate();
         }, 350);
 
-        // ✅ Sub-check B: Bait Script — evaluate()-এর বাইরে
+        // Sub-check B: Bait Script — evaluate()-এর বাইরে
         if (!_baitScriptUrl) {
             scriptBlocked = false;
             evaluate();
@@ -193,6 +193,49 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
+       CHECK 4: HONEYPOT (New)
+       ═══════════════════════════════════════════════════════════ */
+    var HONEYPOT_CLASSES = [
+        'adsbox', 'ad-banner', 'banner-ad',
+        'acrp-ad-box-1', 'acrp-ad-box-2',
+        'random-ad', 'google-ads'
+    ];
+
+    function checkHoneypot(callback) {
+        callback = callback || function () {};
+
+        try {
+            var div = document.createElement('div');
+            var cls = HONEYPOT_CLASSES[Math.floor(Math.random() * HONEYPOT_CLASSES.length)];
+            div.className = cls;
+            div.style.cssText = 'height:1px;width:1px;overflow:hidden;position:absolute;top:-9999px;left:-9999px;';
+            document.body.appendChild(div);
+
+            var done = false;
+
+            function finish(blocked) {
+                if (done) return;
+                done = true;
+                if (div.parentNode) div.parentNode.removeChild(div);
+                callback(blocked);
+            }
+
+            setTimeout(function () {
+                // Check if the div was hidden or removed by an ad-blocker
+                var hidden = (
+                    div.offsetParent === null ||
+                    div.style.display === 'none' ||
+                    div.style.visibility === 'hidden' ||
+                    getComputedStyle(div).display === 'none'
+                );
+                finish(hidden);
+            }, 100);
+        } catch (e) {
+            callback(false);
+        }
+    }
+
+    /* ═══════════════════════════════════════════════════════════
        PUBLIC API
        ═══════════════════════════════════════════════════════════ */
     return {
@@ -203,7 +246,7 @@
             _onClearCb     = config.onClear    || null;
             _detected      = false;
             _cleanChecks   = 0;
-            _pendingChecks = 3;
+            _pendingChecks = 4;
 
             checkBraveShields(function (blocked) {
                 if (blocked) _trigger('brave_shields');
@@ -219,17 +262,23 @@
                 if (blocked) _trigger('dns');
                 _checkComplete(blocked);
             });
+
+            checkHoneypot(function (blocked) {
+                if (blocked) _trigger('honeypot');
+                _checkComplete(blocked);
+            });
         },
 
         checkBraveShields : checkBraveShields,
         checkExtensions   : checkExtensions,
         checkDNSBlock     : checkDNSBlock,
+        checkHoneypot     : checkHoneypot,
 
         reset: function () {
             _detected      = false;
             _pendingChecks = 0;
             _cleanChecks   = 0;
         },
-        version: '2.1.9'
+        version: '2.2.0'
     };
 }));
