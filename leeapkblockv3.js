@@ -1,6 +1,6 @@
 /**
  * Ad Block Detector
- * Version: 2.1.8
+ * Version: 2.1.9
  * Author: Mr. Lee
  */
 
@@ -193,12 +193,28 @@
        ═══════════════════════════════════════════════════════════ */
     function checkGhostery(callback) {
         callback = callback || function () {};
-        try {
-            var isGhostery = !!(window.ghostery && window.ghostery.version);
-            callback(isGhostery);
-        } catch (e) {
-            callback(false);
+        var maxWait = 500;
+        var startTime = Date.now();
+
+        function poll() {
+            try {
+                var isGhostery = !!(window.ghostery || window.Ghostery);
+                
+                if (isGhostery) {
+                    callback(true);
+                    return;
+                }
+                
+                if (Date.now() - startTime < maxWait) {
+                    setTimeout(poll, 30);
+                } else {
+                    callback(false);
+                }
+            } catch (e) {
+                callback(false);
+            }
         }
+        poll();
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -214,6 +230,16 @@
             _cleanChecks   = 0;
             _pendingChecks = 4;
 
+            if (_checkTimeout) clearTimeout(_checkTimeout);
+            _checkTimeout = setTimeout(function () {
+                while (_pendingChecks > 0) {
+                    _pendingChecks--;
+                }
+                if (!_detected && typeof _onClearCb === 'function') {
+                    _onClearCb();
+                }
+            }, 10000);
+
             checkBraveShields(function (blocked) {
                 if (blocked) _trigger('brave_shields');
                 _checkComplete(blocked);
@@ -228,23 +254,22 @@
                 if (blocked) _trigger('dns');
                 _checkComplete(blocked);
             });
-
+            
             checkGhostery(function (blocked) {
                 if (blocked) _trigger('ghostery');
                 _checkComplete(blocked);
             });
         },
 
-        checkBraveShields : checkBraveShields,
-        checkExtensions   : checkExtensions,
-        checkDNSBlock     : checkDNSBlock,
-        checkGhostery     : checkGhostery,
-
         reset: function () {
             _detected      = false;
             _pendingChecks = 0;
             _cleanChecks   = 0;
+            if (_checkTimeout) {
+                clearTimeout(_checkTimeout);
+                _checkTimeout = null;
+            }
         },
-        version: '2.1.8'
+        version: '2.1.9'
     };
 }));
