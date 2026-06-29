@@ -57,7 +57,7 @@
             var img = new Image();
             var startTime = Date.now();
             var finished = false;
-            var DNS_FAST_THRESHOLD = 80;
+            var DNS_FAST_THRESHOLD = 50;
 
             function done(blocked) {
                 if (finished) return;
@@ -71,7 +71,7 @@
                 done(elapsed < DNS_FAST_THRESHOLD);
             };
 
-            setTimeout(function () { done(false); }, 3500);
+            setTimeout(function () { done(false); }, 2000);
             img.src = 'https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/?ts=' + Date.now();
 
         }).catch(function () {
@@ -136,7 +136,7 @@
 
             s.onload  = function () { finishScript(window.abd_ok !== 1); };
             s.onerror = function () { finishScript(true); };
-            setTimeout(function () { finishScript(false); }, 4000);
+            setTimeout(function () { finishScript(false); }, 2000);
             document.head.appendChild(s);
         }
     }
@@ -187,7 +187,7 @@
             img.onerror = function () {
                 finish(Date.now() - startTime < DNS_BLOCK_THRESHOLD);
             };
-            setTimeout(function () { finish(false); }, 3500);
+            setTimeout(function () { finish(false); }, 2000);
             img.src = url + '?_dns_=' + Date.now();
         });
     }
