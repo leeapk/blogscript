@@ -1,16 +1,16 @@
 /**
- * AdBlock Detector
+ * AdBlock Detector — leeapkblockv4.js
  * Advanced multi-layer detection for Brave Shields, uBlock, AdGuard, DNS blockers, etc.
  * Exposes AbdDetector global object.
+ * Fixed: scoring logic, double-finalize race, fetchBait false positive,
+ *        baitScriptUrl unused, honeypot offsetParent, DNS threshold.
  */
 (function(global) {
   'use strict';
 
   // ─── Configuration ──────────────────────────────────────────────
   const CONFIG = {
-    // Honeypot – classes commonly used by ad containers
     HONEYPOT_CLASSES: ['ad-container', 'banner-ad', 'google-ads', 'ad-banner'],
-    // DNS probing – diverse ad/tracking domains
     DNS_DOMAINS: [
       'https://doubleclick.net/ads/',
       'https://googleads.com/ads/',
@@ -23,13 +23,13 @@
       'https://pubmatic.com/ads/',
       'https://openx.net/ads/'
     ],
-    DNS_BLOCK_THRESHOLD: 120,      // ms – fast error => DNS block
-    DNS_MAJORITY_NEEDED: 0.6,      // 60% of probes must be blocked
-    // Brave bait
+    // FIX: 120ms → 200ms; slow connections false positive এড়াতে
+    DNS_BLOCK_THRESHOLD: 200,
+    DNS_MAJORITY_NEEDED: 0.6,
     BRAVE_BAIT_URL: 'https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/?ts=',
-    // Overall timeout for all checks (ms)
     TIMEOUT: 8000,
-    // Confidence threshold (0-100)
+    // Strong signal threshold — একটা check এটা পার করলে detected
+    STRONG_SIGNAL: 70,
     DETECTION_THRESHOLD: 60
   };
 
@@ -48,53 +48,66 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-  // ─── Detection Methods (each returns a Promise<score 0-100>) ──
+  // ─── Detection Methods ───────────────────────────────────────────
 
   // 1. Honeypot Div
+  // FIX: offsetParent === null unreliable → getBoundingClientRect() use করো
   async function checkHoneypot() {
     try {
       const div = document.createElement('div');
       const cls = CONFIG.HONEYPOT_CLASSES[Math.floor(Math.random() * CONFIG.HONEYPOT_CLASSES.length)];
       div.className = cls;
-      div.style.cssText = 'height:1px;width:1px;overflow:hidden;position:absolute;top:-9999px;';
+      div.style.cssText = 'height:1px;width:1px;overflow:hidden;position:fixed;top:-9999px;left:-9999px;';
       document.body.appendChild(div);
       await sleep(100);
-      const hidden = div.offsetParent === null ||
-                     div.style.display === 'none' ||
-                     div.style.visibility === 'hidden' ||
-                     getComputedStyle(div).display === 'none';
+      const rect = div.getBoundingClientRect();
+      const cs   = getComputedStyle(div);
+      const hidden = rect.width === 0 ||
+                     rect.height === 0 ||
+                     cs.display === 'none' ||
+                     cs.visibility === 'hidden' ||
+                     cs.opacity === '0';
       document.body.removeChild(div);
       return hidden ? 80 : 0;
     } catch (e) { return 0; }
   }
 
-  // 2. Performance Observer (detect blocked resources)
+  // 2. Performance Observer
+  // FIX: transferSize === 0 alone is unreliable (cache also gives 0)
+  //      → additionally check decodedBodySize === 0
   async function checkPerformanceObserver() {
+    if (typeof PerformanceObserver === 'undefined') return 0;
     return new Promise((resolve) => {
       let blocked = false;
-      const observer = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          if (entry.initiatorType === 'img' &&
-              entry.name.includes('doubleclick') &&
-              entry.transferSize === 0) {
-            blocked = true;
-            observer.disconnect();
-            resolve(80);
-            return;
+      let observer;
+      try {
+        observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.initiatorType === 'img' &&
+                entry.name.includes('doubleclick') &&
+                entry.transferSize === 0 &&
+                entry.decodedBodySize === 0) {
+              blocked = true;
+              observer.disconnect();
+              resolve(80);
+              return;
+            }
           }
-        }
-      });
-      observer.observe({ entryTypes: ['resource'] });
+        });
+        observer.observe({ entryTypes: ['resource'] });
+      } catch (e) { return resolve(0); }
+
       const img = new Image();
       img.src = CONFIG.BRAVE_BAIT_URL + Date.now();
       setTimeout(() => {
-        observer.disconnect();
+        try { observer.disconnect(); } catch (_) {}
         resolve(blocked ? 80 : 0);
       }, 1500);
     });
   }
 
-  // 3. DNS Blocking (fast errors on many domains)
+  // 3. DNS Blocking
+  // FIX: threshold 120 → 200ms (CONFIG.DNS_BLOCK_THRESHOLD)
   async function checkDNSBlock() {
     return new Promise((resolve) => {
       const domains = CONFIG.DNS_DOMAINS;
@@ -152,7 +165,7 @@
     } catch (e) { return 0; }
   }
 
-  // 5. Extensions (Ghostery, uBlock, ABP) – global objects + CSS
+  // 5. Extension globals + CSS injection markers
   async function checkExtensions() {
     let score = 0;
     if (window.ghostery || window.Ghostery) score = Math.max(score, 80);
@@ -176,38 +189,78 @@
     return score;
   }
 
-  // 6. Fetch bait (random URL)
+  // 6. Fetch bait
+  // FIX: সব catch → blocked ধরা ভুল; শুধু network fetch failure ধরো
   async function checkFetchBait() {
     try {
       const url = randomBaitUrl();
       await fetch(url, { mode: 'no-cors', cache: 'no-store' });
       return 0;
     } catch (e) {
-      return 70;
+      // TypeError + 'fetch' message = network block; বাকি error (offline, etc.) ignore
+      if (e instanceof TypeError && e.message.toLowerCase().includes('fetch')) {
+        return 70;
+      }
+      return 0;
     }
   }
 
-  // ─── Main Detector Class ───────────────────────────────────────
+  // 7. Bait Script injection (NEW — baitScriptUrl এখন actually ব্যবহার হচ্ছে)
+  async function checkScriptBait(url) {
+    if (!url) return 0;
+    return new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = url + '?_=' + Date.now();
+      s.onload = () => {
+        try { document.head.removeChild(s); } catch (_) {}
+        resolve(0);
+      };
+      s.onerror = () => {
+        try { document.head.removeChild(s); } catch (_) {}
+        resolve(80);
+      };
+      setTimeout(() => {
+        try { document.head.removeChild(s); } catch (_) {}
+        resolve(0);
+      }, 3000);
+      document.head.appendChild(s);
+    });
+  }
+
+  // ─── Scoring helper ──────────────────────────────────────────────
+  // FIX: simple average ছিল → false negative হতো।
+  // এখন: কোনো check strong signal (≥70) দিলে সেটাকে weighted বেশি গুরুত্ব দেওয়া হচ্ছে।
+  function computeScore(scores) {
+    if (!scores.length) return 0;
+    const max = Math.max(...scores);
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    // যদি কোনো একটা check strong signal দেয়, max ও average-এর weighted blend নাও
+    if (max >= CONFIG.STRONG_SIGNAL) {
+      return Math.round(max * 0.65 + avg * 0.35);
+    }
+    return Math.round(avg);
+  }
+
+  // ─── Main Detector Class ─────────────────────────────────────────
   class AbdDetector {
     constructor() {
-      this._detected = false;
-      this._score = 0;
-      this._timeoutId = null;
-      this._pending = 0;
+      this._detected   = false;
+      this._score      = 0;
+      this._timeoutId  = null;
+      this._finalized  = false;   // FIX: race condition guard
       this._onDetected = null;
-      this._onClear = null;
+      this._onClear    = null;
       this._baitScriptUrl = '';
     }
 
-    // Public init – called by the WordPress plugin
     init(config) {
-      this._onDetected = config.onDetected || null;
-      this._onClear = config.onClear || null;
+      this._onDetected    = config.onDetected || null;
+      this._onClear       = config.onClear || null;
       this._baitScriptUrl = config.baitScriptUrl || '';
-      this._detected = false;
-      this._score = 0;
+      this._detected      = false;
+      this._score         = 0;
+      this._finalized     = false;
 
-      // Run all checks in parallel
       const checks = [
         checkHoneypot(),
         checkPerformanceObserver(),
@@ -217,7 +270,10 @@
         checkFetchBait()
       ];
 
-      this._pending = checks.length;
+      // FIX: baitScriptUrl এখন actually use হচ্ছে
+      if (this._baitScriptUrl) {
+        checks.push(checkScriptBait(this._baitScriptUrl));
+      }
 
       // Overall timeout
       this._timeoutId = setTimeout(() => {
@@ -226,21 +282,28 @@
 
       Promise.all(checks.map(p => p.catch(() => 0)))
         .then(scores => {
-          const total = scores.reduce((a, b) => a + b, 0);
-          this._score = total / checks.length;
+          this._score = computeScore(scores);
           this._finalize(false);
         })
         .catch(() => this._finalize(true));
     }
 
+    // FIX: _finalized guard দিয়ে double-finalize race condition বন্ধ
     _finalize(forced) {
+      if (this._finalized) return;
+      this._finalized = true;
+
       if (this._timeoutId) {
         clearTimeout(this._timeoutId);
         this._timeoutId = null;
       }
+
+      // Timeout হলে partial score থাকলে সেটা ব্যবহার করো, 0 করো না
       if (forced && this._score < CONFIG.DETECTION_THRESHOLD) {
+        // partial score যদি strong signal না দেখায়, clear করো
         this._score = 0;
       }
+
       const detected = this._score >= CONFIG.DETECTION_THRESHOLD;
       if (detected !== this._detected) {
         this._detected = detected;
@@ -257,20 +320,19 @@
         clearTimeout(this._timeoutId);
         this._timeoutId = null;
       }
-      this._detected = false;
-      this._score = 0;
-      this._pending = 0;
+      this._detected  = false;
+      this._score     = 0;
+      this._finalized = false;   // FIX: reset-এও clear করো
     }
 
     get detected() { return this._detected; }
-    get score() { return this._score; }
+    get score()    { return this._score; }
   }
 
-  // ─── Expose globally ──────────────────────────────────────────
+  // ─── Expose globally ─────────────────────────────────────────────
   const instance = new AbdDetector();
   global.AbdDetector = instance;
 
-  // Also support AMD / CommonJS if needed
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = instance;
   }
